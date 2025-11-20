@@ -1,128 +1,76 @@
-DATA5002 – Sydney Transport Analysis (2016–2025)
+📊 Sydney Transport Trends (2016–2025)
+DATA5002 – Data Visualisation Project
 
-This repository contains the code, data, and final Shiny application for analysing how COVID-19 affected public transport patterns in Sydney. The project visualises long-term trends across all major transport modes and highlights how travel behaviour has changed from the pre-pandemic era into the “new normal”.
-
-📁 Project Contents
+A Shiny dashboard exploring how COVID-19 disrupted and reshaped public transport usage in New South Wales. The app visualises long-term trends across buses, trains, light rail, metro, and ferries, showing how travel behaviour shifted before, during, and after the pandemic.
 app.R
 
-The main Shiny application.
-Includes:
+📁 Project Structure
+DATA5002/
+│
+├── app.R                 # Full Shiny app (UI + server + all plots)
+│
+├── data/                 # Cleaned datasets used by the app
+│   ├── all_modes.csv
+│   ├── bus_clean.csv
+│   ├── train.csv
+│   ├── lightrail.csv
+│   └── other mode files…
+│
+├── www/               # Images/icons (e.g., logo used in navbar)
+│
+└── README.md             # Documentation (this file)
+│
+│
+└── DATA5002 PROJECT.Rmd
+│
+│
+└── DATA5002-PROJECT.nb.html
 
-Data loading and cleaning
+🚀 How to Run the App
 
-UI layout and navigation
-
-All interactive plots (line charts, bar charts, pie charts, bump charts)
-
-Storytelling text and explanations for each mode
-
-/data/
-
-Contains all cleaned datasets used by the Shiny app, including:
-
-Bus trips
-
-Train trips
-
-Light rail trips
-
-Ferry trips
-
-Metro trips
-
-Combined monthly totals
-
-Preprocessed COVID comparison data
-
-README.md
-
-Documentation explaining:
-
-Project structure
-
-How to run the Shiny application
-
-Data sources
-
-Manual preprocessing steps
-
-/assets/ (optional)
-
-Images, icons, and additional visual elements used inside the Shiny app.
-
-/src/ (optional)
-
-Scripts used in early data cleaning before the final datasets were produced.
-
-▶️ How to Run the Shiny App
-
-1. Install required packages:
-
-install.packages(c(
+1. Install required packages
+   install.packages(c(
   "shiny", "tidyverse", "lubridate", "ggplot2", "plotly",
-  "scales", "crosstalk", "ggiraph"
-))
+  "scales", "stringr", "forcats", "ggiraph", "readr"))
+2. Open the folder in RStudio
+3. Run the app
+   shiny::runApp("app.R")
 
+The dashboard will open in your browser automatically.
 
-2. Open the project folder in RStudio.
+📦 Data Sources
 
-3. Run the app:
-
-shiny::runApp("app.R")
-
-
-Or simply:
-
-runApp()
-
-
-The dashboard will launch automatically in your browser.
-
-🗂 Data Source
-
-All data was obtained from the Transport for NSW Open Data Portal.
-Datasets include:
-
-Opal tap-on/off patronage data
-
+All datasets come from the Transport for NSW Open Data Portal, including:
+Monthly Opal patronage (tap on/off)
 Bus contract region data
+Train line-level monthly trips
+Light rail line usage
+Metro & ferry patronage where available
+Data covers the period 2016–2025.
 
-Train line usage
+🔧 Preprocessing Summary
 
-Light rail line-level monthly trips
+Before being loaded into the Shiny app, the raw datasets underwent:
+Standardising Year_Month and converting to proper dates
+Grouping lines/regions (e.g., Sydney Metro vs Outer Sydney)
+Removing duplicates or incomplete rows
+Converting all counts into consistent monthly format
+Merging multiple source files (e.g., train datasets)
+Everything else (plots, aggregation, storytelling) is generated inside app.R.
+No Photoshop or manual graphic editing was used.
 
-Ferry and metro usage where available
+🖥️ What the Dashboard Provides
 
-🔧 Manual Data Processing
-
-Before using the datasets in Shiny, the following preprocessing steps were performed manually:
-
-Converting Year_Month into proper date formats
-
-Fixing inconsistent line or region names
-
-Removing duplicate rows
-
-Grouping excessive line categories (e.g., train lines) to make graphs readable
-
-Ensuring consistent monthly coverage between 2016–2025
-
-Combining multiple files into unified monthly datasets
-
-No manual visual editing (e.g., Photoshop) was used. All charts are generated programmatically.
-
-🎯 Final Output
-
-The Shiny dashboard includes:
-
-Overview page with total trips + multi-mode trends
-
-Mode comparison section
-
-Deep dives on Bus, Train, and Light Rail
-
-COVID impact visualisations
-
-Interactive charts with hover-effects, filters, and sliders
-
-Storytelling sections explaining trends and insights
+Overview Page
+Total patronage trends from 2016–2025
+Modes & COVID Impact
+Compare buses, trains, metro, ferries, and light rail
+Interactive filters + mode share + decline/recovery rates
+Light Rail Analysis
+Why this mode grew the fastest, even during COVID
+Train Analysis
+Line-level behaviour, recovery patterns, and network structure
+Bus Analysis
+Metro vs outer-Sydney differences + slow post-COVID recovery
+Conclusion
+Summary of major behavioural shifts in Sydney mobility
