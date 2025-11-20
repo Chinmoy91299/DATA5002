@@ -1,0 +1,761 @@
+---
+title: ""
+output: html_document
+date: ""
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(readr)
+library(plotly)
+library(scales)
+library(crosstalk)
+library(ggiraph)
+```
+
+
+
+# How COVID-19 Changed Transport Patterns in New South Wales
+
+
+
+---
+
+## Overview
+
+This project explores how COVID-19 disrupted and reshaped public transport usage in New South Wales using data from the NSW Government.We focus on changes in overall travel trends, differences between transport modes, and signs of recovery in the post-pandemic period.The goal is to tell a clear, visual story about how travel patterns in NSW moved from a pre-COVID baseline and through lockdowns into the “new normal” of hybrid work.
+
+
+
+
+
+
+---
+
+## Hypotheses
+
+- Public transport patronage dropped sharply during COVID-19 lockdown periods compared with the 2019 baseline.
+<br>
+- The recovery after lockdowns was uneven across modes.
+<br>
+- Travel patterns may have changed in a more permanent way due to hybrid work and changes in daily routines.
+
+---
+
+First of all, let us have an overall view of the trends.
+
+<br><br>
+
+```{r total_trips, echo=FALSE, message=FALSE, warning=FALSE,fig.width=10, fig.height=5, fig.align='center'}
+# Firstly read in the consolidated all-modes dataset
+#when u want to re run the data, plz downlaod the csv file named "all_modes" 
+df_all <- read_csv("all_modes.csv")
+
+# This step is to clean the dataset 2 which is the dataset for the overall trips.Now create a proper DATE column (using Year_Month)
+df_all$DATE <- as.Date(paste0("01-", df_all$Year_Month), format = "%d-%b-%y")
+
+# Aggregate to monthly trips by mode
+df_monthly <- df_all %>%
+  group_by(DATE, Travel_Mode) %>%
+  summarise(
+    Trips = sum(Trip, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(DATE)
+
+# clean up inconsistent mode names
+df_monthly <- df_monthly %>%
+  mutate(
+    Travel_mode = tolower(Travel_Mode),
+    Travel_Mode = case_when(
+      Travel_Mode %in% c("bus") ~ "Bus",
+      Travel_Mode %in% c("train") ~ "Train",
+      Travel_Mode %in% c("metro") ~ "Metro",
+      Travel_Mode %in% c("ferry") ~ "Ferry",
+      Travel_Mode %in% c("light rail", "lightrail") ~ "Light Rail",
+      TRUE ~ Travel_Mode
+    )
+  ) %>%
+  filter(
+    !Travel_Mode %in% c("unallocated", "unknown", "")
+  )
+
+# aggregate to total trips across all modes by date
+df_total <- df_monthly %>%
+  group_by(DATE) %>%
+  summarise(
+    Trips_total = sum(Trips),
+    .groups = "drop"
+  )
+
+# Create the static ggplot
+p_total <- ggplot(df_total, aes(x = DATE, y = Trips_total)) +
+  geom_line(color = "blue", linewidth = 0.8) +
+  labs(
+    title = "Total Public Transport Trips",
+    x = "Year",
+    y = "Total Trips"
+  ) +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  scale_y_continuous(
+    labels = comma,
+    breaks = seq(0, max(df_total$Trips_total) * 1.5, by = 10e6)
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+
+#now we make an interactive on
+ggplotly(p_total)
+
+```
+---
+This chart shows the total number of public transport trips across all modes in NSW over time.
+We can clearly see the sharp drop in patronage during the main COVID-19 lockdown periods, followed by a gradual recovery as restrictions eased.
+This provides a baseline view of how strongly the pandemic disrupted everyday mobility in NSW.
+
+***
+Then we foucus the difference between the modes.
+
+<br><br>
+```{r trip_bymode, echo=FALSE, message=FALSE, warning=FALSE,fig.width=8, fig.height=5, fig.align='center'}
+df_monthly1 <- df_monthly %>% 
+  mutate(Year = as.integer(format(DATE, "%Y")))
+d <- SharedData$new(df_monthly1)
+
+
+bscols(
+  widths = c(2, NA),
+  list(
+    filter_select("mode", "Mode", d, ~Travel_Mode, multiple = TRUE),
+    filter_slider("year", "Year", d, ~Year, width = "100%", step = 1, round = TRUE)
+  ),
+  list(
+     plot_ly(d, x = ~DATE, y = ~Trips, color = ~Travel_Mode,type = "scatter", mode = "lines") %>%
+       layout(
+         title = list(text = "Public Transport Trips by Mode", x = 0.35),
+         margin = list(t = 80),
+         xaxis = list(title = "Year"),
+         yaxis = list(title = "Trips", tickformat = ",d")),
+     plot_ly(d,x = ~DATE, y =~Trips, color = ~Travel_Mode, type = "bar") %>%
+      layout(
+         xaxis = list(title = "Year"),
+         yaxis = list(title = "Trips", tickformat = ",d"))
+  )
+)   
+```
+
+
+
+
+***
+
+Using the first chart, we can observe the trends across different modes.For the two major modes - train and bus, both show a significant decline in 2020 which clearly showed the impact of the pandemic.To more clearly observe how the “popularity” of different transport modes has changed over time, we use two additional visualizations, a pie chart and a ranking chart.
+
+
+```{r trips_pie, echo=FALSE, message=FALSE, warning=FALSE}
+#create a new share so let the pie chart is independent with th above charts
+d1 <- SharedData$new(df_monthly1)
+bscols(
+  widths = c(2, NA),
+  list(
+    filter_slider("year", "Year", d1, ~Year, width = "100%", step = 1, round = TRUE)
+  ),
+  list(
+    plot_ly(d1,labels = ~Travel_Mode, values = ~Trips, type = "pie" ) %>%
+      layout(
+        title = list(text = "Annual Share of Trips by Mode", x = 0.5),
+        margin = list(t = 80)
+      )
+  ))
+    
+```
+We can see that although bus and train consistently make up the largest share from 2016 to 2025, their share has been gradually declining year by year. Now, we go deeper to see the difference of trips in the three periods for each mode.
+
+```{r covid_comparison, echo=FALSE, message=FALSE, warning=FALSE,fig.width=10, fig.height=5, fig.align='center'}
+#After have some views of the situation, we now can do some data analysis.We want to know the trips decline rate during COVID, the recovery data after COVID, and compare pre-COVID and post-COVID.
+#we create three dataframes which are corresponded to pre-covid, during covid and post-covid.
+df_year <- df_monthly %>%
+  mutate(
+    Year = format(DATE, "%Y")
+  ) %>%
+  group_by(Year,Travel_Mode) %>%
+  summarise(
+    Trips = sum(Trips,na.rm = TRUE)
+  )
+df_precovid <- df_year %>%
+  filter(Year >= 2016, Year <=2019)
+df_duringcovid <- df_year %>%
+  filter(Year >= 2020, Year<=2022)
+df_postcovid <- df_year %>%
+  filter(Year >= 2023, Year<=2025)
+#now we create three average value dataframes
+df_preavg <- df_precovid %>%
+  group_by(Travel_Mode) %>%
+  summarise(
+    average_trips = mean(Trips, na.rm = TRUE)
+  )
+df_duringavg <- df_duringcovid %>%
+  group_by(Travel_Mode) %>%
+  summarise(
+    average_trips = mean(Trips, na.rm = TRUE)
+  )
+df_postavg <- df_postcovid %>%
+  group_by(Travel_Mode) %>%
+  summarise(
+    average_trips = mean(Trips, na.rm = TRUE)
+  )
+#now we join the three datagrame together
+df_compare <- df_preavg %>%
+  left_join(df_duringavg, by = "Travel_Mode") %>%
+  left_join(df_postavg, by = "Travel_Mode")
+# adjust it a little to change the coloum name
+df_compare <- df_compare %>%
+  rename(
+    Pre_Avg    = average_trips.x,
+    During_Avg = average_trips.y,
+    Post_Avg   = average_trips
+  )
+#Now we can compute the rates we need. I assume that the DECLINE RATE = (during_avg-pre_avg)/pre_avg.The RECOVERY RATE = Post_Avg/ Pre_Avg. And the increase rate = (post_avg-during_avg)/during_avg.drop_rate2 = (Post_Avg-Pre_Avg)/Pre_Avg
+
+df_compare <- df_compare %>%
+  mutate(
+    decline_rate = (During_Avg- Pre_Avg)/ Pre_Avg,
+    recovery_rate = Post_Avg/ Pre_Avg,
+    increase_rate = (Post_Avg-During_Avg)/During_Avg,
+    drop_rate2 = (Post_Avg-Pre_Avg)/Pre_Avg
+  )
+df_longcompare <- df_compare %>%
+  select(Travel_Mode, Pre_Avg, During_Avg, Post_Avg) %>%
+  pivot_longer(
+    cols = c(Pre_Avg, During_Avg, Post_Avg),
+    names_to = "Period",
+    values_to = "Trips"
+  )
+df_longcompare$Period <- factor(df_longcompare$Period,
+                         levels = c("Pre_Avg","During_Avg","Post_Avg"),
+                         labels = c("Pre-COVID", "During COVID", "Post-COVID"))
+#Now we have a very strong dataframe that includes the details of modes in different periods.We can create grouped bar charts.Through this plot we can see the differnece of a mode's trips in differnet period 
+
+```
+
+```{r covid_comparison1, echo=FALSE, message=FALSE, warning=FALSE,fig.width=10, fig.height=5, fig.align='center'}
+#Now we have a very strong dataframe that includes the details of modes in different periods.We can create grouped bar charts.Through this plot we can see the differnece of a mode's trips in different period 
+
+ggplot(df_longcompare, aes( x = Travel_Mode, y = Trips, fill = Period)) + 
+  geom_col(position = position_dodge(width = 0.8)) + 
+  scale_y_continuous(labels = comma, breaks = seq(0,max(df_longcompare$Trips)*1.5, by =5e7)) +
+  labs(title = "Average Annual Public Transport Trips: Pre-COVID vs During COVID vs Post-COVID",
+    x = "Tranport Mode",
+    y = "Average Annual Trips",
+    fill = "Period"
+  ) +
+  theme(plot.title = element_text(hjust = 0.5,face = "bold"))
+```
+
+
+
+
+```{r covid_comparison2, echo=FALSE, message=FALSE, warning=FALSE,fig.width=10, fig.height=5, fig.align='center'}
+#Now we can create the plots for the rates,Firstly, the decline rate
+ggplot(df_compare,aes(x = Travel_Mode, y = decline_rate, fill = Travel_Mode)) +
+  geom_col(width = 0.6) +
+  scale_y_continuous(labels = percent) +
+  labs( 
+    title = "Change of Average Trips Compared to Pre-COVID Levels (2016–2019 vs 2020–2022)",
+    x = "Transport Mode",
+    y = "Change Rate",
+    fill = "Mode"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+  )
+```
+Based on the two plots above, except for the light rail, generally the other four modes were all being impacted by the COVID in an average level. And for the light rail, it experienced a short-term impact, but over the course of the pandemic, its usage increased significantly compared to pre-pandemic levels.
+
+
+```{r covid_comparison3, echo=FALSE, message=FALSE, warning=FALSE,fig.width=10, fig.height=5, fig.align='center'}
+#now the increase rate
+ggplot(df_compare,aes(x = Travel_Mode, y = increase_rate, fill = Travel_Mode)) +
+  geom_col(width = 0.6) +
+  scale_y_continuous(labels = percent) +
+  labs(
+    title = "Change Compared to During-COVID Levels (2020–2022 vs 2023-2025)",
+    x = "Transport Mode",
+    y = "Change Rate",
+    fill = "Mode"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+  )
+
+```
+```{r covid_comparison4, echo=FALSE, message=FALSE, warning=FALSE,fig.width=10, fig.height=5, fig.align='center'}
+# Now the recovery rates.
+ggplot(df_compare,aes(x = Travel_Mode, y = recovery_rate, fill = Travel_Mode)) +
+  geom_col(width = 0.6) +
+  scale_y_continuous(labels = percent) +
+  labs(
+    title = "Post-COVID Recovery Rate (2023–2025 vs 2016–2019)",
+    x = "Transport Mode",
+    y = "Recovery Rate",
+    fill = "Mode"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+  )
+```
+
+These two charts show that although all transport modes have recovered significantly compared to the pandemic period, bus and train have still not returned to their pre-pandemic average levels. In contrast, ferry, light rail, and metro have all surpassed their pre-pandemic performance.
+<br>
+```{r bump_chart, echo=FALSE, message=FALSE, warning=FALSE,fig.width=8, fig.height=5, fig.align='center'}
+#To precisely detect the preference of NSW citizens' prefernces of the puclic transport, we can create a bump chart.Firstly we need to create dataframe that record specific shares and annual trips count per mode.
+#we look at the mode share. Firstly, we create a dataframe for the annual trips count per mode.
+df_share_mode <- df_year %>%
+  group_by(Year) %>%
+  mutate(
+    year_total = sum(Trips),
+    share = Trips/year_total
+  )
+#now we use the share to create a dataframe that record the rank.
+df_rank_mode <- df_share_mode %>%
+  group_by(Year) %>%
+  arrange(desc(share)) %>% 
+  mutate(rank = row_number()) %>%
+  ungroup()
+#change the year value into numerical value
+df_rank_mode <- df_rank_mode %>%
+  mutate(Year = as.numeric(Year))
+#now we can do a bunp chart
+ggplot(df_rank_mode, aes( x = Year, y = rank, color = Travel_Mode ,group = Travel_Mode)) + 
+  geom_line(size = 1.4) +
+  geom_point(size = 3) + 
+  scale_x_continuous(breaks = sort(unique(df_rank_mode$Year))) +
+  scale_y_reverse(breaks = 1:length (unique(df_rank_mode$Travel_Mode))) + 
+  labs(
+    title = "Ranking Of The Public Transport By Annual share",
+    x = "Year",
+    y = "Rank",
+    color = "Mode"
+  ) + 
+   theme(
+    plot.title =  element_text(hjust = 0.5, face = "bold"),
+    legend.key.size = unit(0.4, "cm"),
+    legend.text = element_text(size = 8)
+    
+  )
+```
+
+
+Based on the ranking chart, we can see that although the shares of bus and train are declining, their total trip volumes still remain the top two. Interestingly, light rail has been climbing in the rankings. Combined with the earlier trend chart, light rail was only affected during the initial phase of the pandemic; afterward, its total trips rose rapidly. Although there were fluctuations during COVID, its during-pandemic peaks exceeded the levels seen before the pandemic. It is true the climbing started before COVID, however it "seems" to less be impacted from the pademic. Therefore, we need to go deeper to the light rail data.
+
+```{r prep_lightrail, echo=FALSE, message=FALSE, warning=FALSE,fig.width=8, fig.height=5, fig.align='center'}
+#cleaning of dataset 4 whicH is the dataset for light rail.
+#read the dataset When u want to re run the code, plz download and read the csv file named "lightrail"
+df_lr <- read.csv("lightrail.csv")
+#clean the data
+df_lr$DATE <- as.Date(paste0("01-", df_lr$Year_Month), format = "%d-%b-%y")
+df_lr1 <- df_lr %>%
+#we only need the Date, traveL mode and trips
+  #change the date type
+  mutate(
+    DATE = case_when(
+      nchar(Year_Month) == 6 ~ as.Date(paste0("01-", Year_Month), format = "%d-%b-%y"),
+      nchar(Year_Month) == 8 ~ as.Date(paste0("01-", Year_Month), format = "%d-%b-%Y"),  
+      TRUE ~ NA_Date_
+    )) %>%
+  group_by(DATE,Line) %>%
+  summarise(
+    Trips = sum(Trip, na.rm = TRUE),
+  ) %>%
+  arrange(DATE)
+
+
+```
+
+We can have an overall view of the light rail trips' development.
+
+```{r lightrail——total, echo=FALSE, message=FALSE, warning=FALSE}
+#Firstly, we see the total trips per month regardless the Line .
+df_lrc_monthly <- df_lr1 %>%
+  group_by(DATE) %>%
+  summarise(total_trips = sum(Trips, na.rm = TRUE))
+#We group them by year.
+df_lrc_yearly <- df_lrc_monthly %>%
+  mutate(
+    year = lubridate::year(DATE)
+  ) %>%
+  group_by(year) %>%
+  summarise(total_trips = sum(total_trips))
+#now we can make a plot
+trips_lrtotal <- ggplot(df_lrc_yearly, aes(x = year, y = total_trips)) +
+  geom_line(size = 1.1, color = "blue") +
+  geom_point(size = 3) +
+  scale_x_continuous(breaks = df_lrc_yearly$year)+
+  scale_y_continuous(labels = comma,breaks = seq(0,max(df_lrc_yearly$total_trips)*1.5,by = 5e6)) +
+  labs(
+    title = "Anuual Trips of Light Rail",
+    x = "Year",
+    y = "Total Trips"
+  ) +
+   theme(
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+ggplotly(trips_lrtotal)
+#we want to get deeper to see the trend in different lines.We create a new datafrme first
+df_lrc_linemonthly <- df_lr1 %>%
+  group_by(DATE,Line) %>%
+  summarise(total_trips = sum(Trips, na.rm = TRUE))
+#now we can make a new yearly dataframe
+df_lrc_lineyearly <- df_lrc_linemonthly %>%
+  mutate(
+    year = lubridate::year(DATE)
+  ) %>%
+  group_by(year,Line) %>%
+  summarise(total_trips = sum(total_trips))
+#we can see the share of the Lines.Firstly, we see the coloum plot.
+ggplot(df_lrc_lineyearly, aes(x = year, y = total_trips, fill = Line)) +
+  geom_col() +
+  scale_x_continuous(breaks = df_lrc_yearly$year) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "Annual Trips Per Line",
+    x = "Year",
+    y = "Annual Trips",
+    fill = "Line"
+  ) +
+  theme(
+    plot.title =  element_text(hjust = 0.5, face = "bold"),
+    legend.key.size = unit(0.4, "cm"),
+    legend.text = element_text(size = 8)
+  )
+```
+
+Clearly, the trips of light rail keeps going up as time goes by.
+<br><br>
+
+
+```{r lightrail_pie, echo=FALSE, message=FALSE, warning=FALSE}
+df_lrc1 <- df_lr1 %>%
+  mutate(
+    DATE = as.Date(DATE)  
+  ) %>%
+  mutate(
+    Year = as.integer(format(DATE, "%Y"))
+  )
+d3 <- SharedData$new(df_lrc1)
+
+bscols(
+  widths = c(2, NA),
+  list(
+    filter_slider("year", "Year", d3, ~Year, width = "100%", step = 1, round = TRUE)
+  ),
+  list(
+    plot_ly(d3,labels = ~Line, values = ~Trips, type = "pie" ) %>%
+      layout(
+        title = list(text = "Annual Light Rail Share of Trips by Line", x = 0.35),
+        margin = list(t = 80)
+      )
+  ))
+
+
+```
+
+
+```{r lightrail, echo=FALSE, message=FALSE, warning=FALSE}
+#seperate view
+
+d2 <- SharedData$new(df_lrc1)
+bscols(
+  widths = c(2, NA),
+  list(
+    filter_slider("year", "Year", d2, ~Year, width = "100%", step = 1, round = TRUE),
+    filter_select("Line", "Line", d2, ~Line, multiple = TRUE)
+  ),
+  list(
+     plot_ly(d2, x = ~DATE, y = ~Trips, color = ~Line,type = "scatter", mode = "lines") %>%
+       layout(
+         title = list(text = "Light Rail Trips by Line", x = 0.35, xanchor = "center"),
+         margin = list(t = 80),
+         xaxis = list(title = "Year"),
+         yaxis = list(title = "Trips", tickformat = ",d")),
+     plot_ly(d2,x = ~DATE, y =~Trips, color = ~Line, type = "bar") %>%
+      layout(
+         xaxis = list(title = "Year"),
+         yaxis = list(title = "Trips", tickformat = ",d"))
+   
+  )
+)
+
+```
+
+From the three interactive visualisations above, we observe that although the overall trend for light rail is upward, the development of individual lines varies significantly.
+
+For the Dulwich Hill Line, which used to be the dominant light rail line before the pandemic, its share has been steadily declining. Importantly, this decline began even before COVID-19, meaning the pandemic was only one contributing factor and a sharp short-term impact. Its share dropped from nearly 100% in 2016 to around 47% by 2020, just as the pandemic began. Although total trips have recovered since 2022, they have never returned to the levels seen between 2018 and 2020.
+
+Its main “competitors” are now the Kingsford Line and the Randwick Line, both of which have grown substantially over the past nine years. The Kingsford Line is particularly interesting. It only started operating after the pandemic began (2020), yet it appears to have been minimally affected by COVID-19. It experienced only a brief dip between 2021 and 2022, and even during the early pandemic period (2020–2021), its trend was upward. Afterthe pandemic, its growth has been consistently strong.
+
+In summary, the overall increase in light rail trips is largely driven by these two lines. And although the total number of light rail trips is still far below buses and trains as shown in earlier trend charts, it is still the mode that has experienced the largest proportional increase in popularity.
+
+<br><br><br><br><br><br><br>
+
+```{r}
+#read and clean
+train <- read.csv("train.csv")
+train_clean <- train %>%
+mutate(
+DATE_str = paste0("01-", Year_Month),
+DATE = parse_date_time(DATE_str, orders = "d-b-y", locale = "C"),
+DATE = as.Date(DATE),
+Year  = year(DATE),
+Month = month(DATE, label = TRUE, abbr = TRUE),
+Card_type = str_trim(Card_type),
+Line      = str_trim(Line)
+) %>%
+filter(!is.na(DATE)) %>%
+arrange(DATE)
+```
+
+
+Now let us turn our view to the Trains data.
+```{r}
+#Total train trips trend
+train_total <- train_clean %>%
+group_by(DATE,Line) %>%
+summarise(
+Trips_total = sum(Trip, na.rm = TRUE),
+.groups = "drop"
+)
+
+#all lines together
+
+train_total1 <- train_clean %>%
+group_by(DATE) %>%
+summarise(
+Trips_total = sum(Trip, na.rm = TRUE),
+.groups = "drop"
+)
+#whole trend regradless of line
+ggplot(train_total1, aes(x = DATE, y = Trips_total)) +
+  geom_line() +
+  scale_y_continuous(labels = comma) +
+  labs(
+    x = "Year",
+    y = "Trips",
+    title = "Trips of Train per Year") +
+    theme(plot.title = element_text(hjust = 0.5,face = "bold"))
+
+gg <- ggplot(train_total, aes(x = DATE,  y = Trips_total, color = Line, group = Line)) + 
+  geom_line_interactive(aes(tooltip = Line, data_id = Line)) +
+  scale_y_continuous(labels = comma) +
+  scale_color_viridis_d(guide = "none") +
+  labs(title = "Total Trips Per Lines",
+       x = "time",
+       y = "Trips") +
+   theme(plot.title = element_text(hjust = 0.5,face = "bold"))
+x <- girafe(ggobj = gg, width_svg = 8, height_svg = 6,
+  options = list(
+    opts_hover_inv(css = "opacity:0.1;"),
+    opts_hover(css = "stroke-width:2;")
+  ))
+x
+```
+
+
+we can then see a pie chart
+
+```{r}
+#we find there are tto mant lines so the plot is not friendly to view. we have to manually group the lines
+#change data type
+df_train_year <- train_total %>%
+  mutate(
+    DATE = as.Date(DATE)  
+  ) %>%
+  mutate(
+    Year = as.integer(format(DATE, "%Y"))
+  )
+
+#now plot
+d6 <- SharedData$new(df_train_year)
+bscols(
+  widths = c(2, NA),
+  list(
+    filter_slider("year", "Year", d6, ~Year, width = "100%", step = 1, round = TRUE)
+  ),
+  list(
+    plot_ly(d6,labels = ~Line, values = ~Trips_total, type = "pie", textinfo = "none") %>%
+      layout(
+        title = list(text = "Annual Train Share of Trips by Line", x = 0.35),
+        margin = list(t = 80),
+        height = 800,
+        width = 900
+        
+        
+      )
+     )
+  )
+```
+
+```{r read_data, echo=FALSE, message=FALSE, warning=FALSE}
+bus <- read.csv("bus_clean.csv")
+
+bus <- bus %>%
+  mutate(
+    Date = as.Date(paste0("01-", Year_Month), format = "%d-%b-%Y")
+  )
+
+
+```
+
+
+```{r bus, echo=FALSE, message=FALSE, warning=FALSE}
+monthly_total <- bus %>%
+  group_by(Date) %>%
+  summarise(Total_Trips_All = sum(Trip, na.rm = TRUE)) %>%
+  arrange(Date)
+
+
+d <- SharedData$new(monthly_total)
+
+bscols(
+  widths = c(3, NA),
+
+  # LEFT COLUMN (filters)
+  list(
+    filter_slider("year", "Year", d, ~year(Date)),
+    filter_slider("date", "Date Range", d, ~Date),
+    filter_select("month", "Month", d, ~month(Date, label = TRUE))
+  ),
+
+  # RIGHT COLUMN (interactive plot)
+  plot_ly(
+    d,
+    x = ~Date,
+    y = ~Total_Trips_All,
+    type = "scatter",
+    mode = "lines+markers",
+    line = list(color = "steelblue", width = 2),
+    marker = list(size = 6)
+  ) %>%
+    layout(
+    title = "Total Bus Trips in Sydney (Interactive)",
+    xaxis = list(title = "Month"),
+    yaxis = list(title = "Total Trips (Millions)", tickformat = ".2s")
+  )
+)
+
+
+
+```
+
+The time-series plot of total monthly bus trips shows two major COVID-related shocks in Sydney. The first and most severe drop begins around February 2020, reaching its lowest point in April 2020 during the peak of the initial lockdown. As restrictions eased, bus usage began to rise steadily throughout late 2020.
+
+A second, smaller but still significant decline appears around July–August 2021, corresponding to the Delta outbreak and the second major lockdown in NSW. This second disruption interrupts the recovery that had begun after the first wave.
+
+Following the 2021 lockdown, bus trips start increasing again, but the levels remain below the pre-pandemic period. The post-COVID pattern shows more variability and a flatter trajectory, indicating that although public transport demand improved, it never fully returned to the pre-2020 “normal.” Hybrid work, behavioural changes, and altered travel routines likely contribute to this long-term shift.
+
+
+```{r bus2, echo=FALSE, message=FALSE, warning=FALSE}
+monthly_period <- monthly_total %>%
+mutate(
+Period = case_when(
+Date < as.Date("2020-03-01") ~ "Pre-COVID",
+Date < as.Date("2021-12-01") ~ "During COVID",
+TRUE ~ "Post-COVID"
+)
+)
+
+monthly_period %>%
+group_by(Period) %>%
+summarise(Average = mean(Total_Trips_All, na.rm = TRUE)) %>%
+ggplot(aes(Period, Average, fill = Period)) +
+geom_col() +
+scale_y_continuous(labels = label_number(scale = 1e-6, suffix = "M")) +
+labs(
+title = "Average Monthly Bus Trips: Pre, During, and Post COVID",
+x = "",
+y = "Average Trips (Millions)"
+)
+
+```
+
+***
+
+The bar chart summarises average bus usage across three major periods. The pre-COVID period has the highest average number of monthly trips, reflecting stable public transport demand before 2020. During COVID, the average drops sharply due to the lockdowns.
+
+The post-COVID average increases compared with the pandemic period, consistent with the gradual recovery seen after late 2021. However, it still remains noticeably below the pre-COVID level.
+```{r bus3, echo=FALSE, message=FALSE, warning=FALSE}
+# Region grouping based on contract names ---------------------------------
+region_compare <- bus %>%
+  mutate(
+    Region_group = case_when(
+      str_detect(Contract_region, "^Night Ride") ~ "Night Ride",
+
+      str_detect(Contract_region, "^Sydney Metro Contract") |
+        str_detect(Contract_region, "^Greater Sydney Contract") ~ "Sydney Metro",
+
+      str_detect(Contract_region, "^Outer Sydney Metro Contract") |
+        str_detect(Contract_region, "^NISC") |
+        str_detect(Contract_region, "^SBSC") ~ "Outer Sydney",
+
+      TRUE ~ "Other"
+    )
+  ) %>%
+  filter(Region_group %in% c("Night Ride", "Sydney Metro", "Outer Sydney")) %>%
+  group_by(Date, Region_group) %>%
+  summarise(
+    Total = sum(Trip, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+region_compare_filtered <- region_compare %>%
+  filter(Region_group %in% c("Sydney Metro", "Outer Sydney"))
+
+
+```
+
+```{r bus4, echo=FALSE, message=FALSE, warning=FALSE}
+d_region <- SharedData$new(region_compare_filtered)
+
+bscols(
+  widths = c(3, NA),
+
+  # LEFT COLUMN (filters)
+  list(
+    filter_checkbox("region", "Region", d_region, ~Region_group),
+    filter_slider("year", "Year", d_region, ~year(Date)),
+    filter_slider("date", "Date Range", d_region, ~Date)
+  ),
+
+  # RIGHT COLUMN (interactive plot)
+  plot_ly(
+    d_region,
+    x     = ~Date,
+    y     = ~Total,
+    color = ~Region_group,
+    type  = "scatter",
+    mode  = "lines+markers",
+    marker = list(size = 6)
+  ) %>%
+    layout(
+      title = "Bus Trips by Contract Region (Interactive)",
+      xaxis = list(title = "Month"),
+      yaxis = list(
+        title      = "Trips (Millions)",
+        tickformat = ".2s"
+      ),
+      legend = list(title = list(text = "Region"))
+    )
+)
+
+
+
+```
+The region comparison shows that Sydney Metro consistently has more people travelling compared to Outer Sydney. Sydney Metro also recovers more quickly after both COVID waves, with trips rising sooner and stabilising at a higher level. Outer Sydney follows the same pattern of decline and recovery but at a much smaller scale, showing lower usage overall.
+
+
+***
+
+In summary, the analysis shows that COVID-19 caused a dramatic and immediate drop in public transport usage across NSW, with the steepest decline occurring during the first lockdown in early 2020. Although patronage gradually recovered, a second decline during the 2021 outbreak highlighted how sensitive mobility patterns remained to public health restrictions. While bus, train and metro travel increased again after restrictions eased, overall usage has still not returned to pre-pandemic levels. In contrast, light rail usage continued to climb throughout the pandemic, making it the mode with the most notable change before and after COVID-19. In a sense, light rail has become a “new normal” compared to the pre-pandemic period.  
+
